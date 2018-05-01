@@ -1,6 +1,6 @@
 --
 title: 'Exploration 13: Workflow'
-author: 'Jake Bowers'
+author: 'James, Jack, & Zach'
 date: '`r format(Sys.Date(), "%B %d, %Y")`'
 fontsize: 10pt
 geometry: margin=1in
