@@ -1,6 +1,6 @@
 ---
 title: "Exploration 13"
-author: "Jack, James, and Zach"
+author: "Jack, James, and Zach "
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 header-includes: \usepackage{dcolumn}
 output: pdf_document
