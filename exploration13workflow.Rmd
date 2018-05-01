@@ -1,0 +1,357 @@
+--
+title: 'Exploration 13: Workflow'
+author: 'Jake Bowers'
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+fontsize: 10pt
+geometry: margin=1in
+mainfont: "Crimson Text"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+---
+```{r include=FALSE, cache=FALSE}
+# Some customization.  You can alter or delete as desired (if you know what you are doing).
+# knitr settings to control how R chunks work.
+
+## To make the html file do
+## render("exploration4.Rmd",output_format=html_document(fig_retina=FALSE))
+## To make the pdf file do
+## render("exploration4.Rmd",output_format=pdf_document())
+
+require(knitr)
+opts_chunk$set(
+  tidy=FALSE,     # display code as typed
+  echo=TRUE,
+  results='markup',
+  strip.white=TRUE,
+  fig.path='figs/fig',
+  cache=FALSE,
+  highlight=TRUE,
+  width.cutoff=132,
+  size='footnotesize',
+  out.width='.9\\textwidth',
+  fig.retina=FALSE,
+  message=FALSE,
+  comment=NA)
+
+if(!file.exists('figs')) dir.create('figs')
+
+options(SweaveHooks=list(fig=function(){
+			   par(mar=c(3.5, 3, 1.1, 0),
+			       pty="s",
+			       mgp=c(1.5,0.5,0),
+			       oma=c(0,0,0,0))},
+			 echo=function(){options(continue=" ") ##Don't show "+" prompts,
+			 options(prompt=" ")
+			 }),
+	digits=4,
+	scipen=8,
+	width=132
+	)
+options(error=function(){options(prompt="> ",continue="+ ");NULL})
+```
+
+**The question:** Which predicts Trump vote more strongly --- socioeconomic status or beliefs about immigration?
+
+**The overall task:** Create a reproducible workflow and practice writing about Bayesian approaches to data analysis.
+
+Details:
+ - Use the `rstanarm` package to produce posterior distributions of model quantities (like coefficients and/or predictions) to address this question.
+ - Make a new github repository for your group to use for collaboration: Decide if you want to have each group member fork or just use branches for pull requests within the group.
+ - Each task requires its own file: you will want a file for data cleaning, a file for data analysis (say, fitting linear models), a file per figure or table, a file for text.
+ - The text should should be written in LaTeX or R+markdown and should involve a bibliography that is automatically generated using either bibtex or biblatex. The text should be about 1 page and involve one figure and/or one table in addition to an interpretation and explanation of the meaning of the results. (Imagine it as the results section of a paper, but shorter.)
+ - Someone who wanted to reproduce the work should be able to do so automatically --- without opening and running each file --- and they should be able to do so on their own computer. What system will you use for this?
+    - You may use the old Make system (https://www.google.com/search?q=makefiles+and+r&oq=makefiles+and+r)
+    - Or R oriented approaches like `drake` (https://github.com/ropensci/drake) or `remake` (https://github.com/richfitz/remake) or `snakemake` (https://snakemake.readthedocs.io/en/stable/)
+    - Or something else.
+    
+##Recoding
+```{r}
+##In this code chunk, we downloaded data from the ANES from the 2016 election cycle. Respondents were survyed before and after the 2016 US presidential election. After we downloaded the data from the codebook, we did a small amount of data cleaning to make sure our variables were interpretable with our given models. For example, a post Trump feeling thermometer has a number of 998 in the data frame, which indicates the respondent did not know how to rate their feelings toward Trump. We ommited 998 from our variable to ensure our analysis would make sense. We did this with our all of our variables listed below. 
+
+library(readstata13)
+library(tidyverse)
+library(car)
+#codebook http://www.jakebowers.org/PS531/anes_timeseries_2016_userguidecodebook.pdf
+anes16 <- read.dta13("http://jakebowers.org/PS531/anes_timeseries_2016.dta")
+#anes16 <- #read.dta13("anes_timeseries_2016.dta")
+
+
+## Feeling thermometer for Trump asked AFTER the election
+anes16$ftTrumpPost <- with(anes16, ifelse(V162079 < 0 | V162079 == 998, NA, V162079))
+
+## Feeling thermometer for Trump asked BEFORE the election
+anes16$ftTrumpPre <- with(anes16, ifelse(V161087 < 0 | V161087 == 998, NA, V161087))
+
+anes16$voteTrump<-with(anes16,car::Recode(V162034a,"2=1;c(-9,-8,-7,-6,-1,7,9)=NA;else=0"))
+with(anes16,table(voteTrump,V162034a,exclude=c()))
+
+anes16$voteTrump<-with(anes16,Recode(V162034a,"2=1;c(-9,-8,-7,-6,-1,7,9)=NA;else=0"))
+with(anes16,table(voteTrump,V162034a,exclude=c()))
+
+table(anes16$V162230x, exclude = c())
+table(anes16$V162034a, exclude = c())
+
+
+anes16$age <- with(anes16,ifelse(V161267<0,NA,V161267))
+summary(anes16$age)
+## Make an indicator variable 1=over 50, 0=under 50
+anes16$age50plus <- as.numeric(anes16$age>=50)
+
+
+anes16$obamaNotMuslimCertain <- with(anes16,ifelse(V162255x<0,NA,V162255x-1))
+anes16$obamaMuslim <- with(anes16,ifelse(V162255<0,NA,V162255))
+anes16$obamaMuslim01 <- as.numeric(anes16$obamaMuslim==1)
+
+##V161270 PRE: Highest level of Education
+anes16$educyrs <- with(anes16,ifelse(V161270<0 | V161270 %in% c(90,95),NA,V161270-1))
+
+
+## PID V161158x
+### -8. Don’t know 11 -9. Refused
+## V161158x PRE: SUMMARY - Party ID
+
+
+anes16$pid <- factor(with(anes16,ifelse( V161158x<0,NA,V161158x )))
+anes16$educ <- with(anes16,ifelse( V161270<0 | V161270>16,NA,V161270 ))
+#V162078=Post_Dem. V162079=Post_Republican.
+anes16$ftdemrep <- with(anes16, V162078 - V162079)
+## Recode the 7 point partisanship scale into two categories: democrats (1) versus republicans.(0).
+
+
+## V162078 POST: Feeling thermometer: Democratic Presidential candidate
+## V162079 POST: Feeling thermometer: Republican Presidential candidate
+## V162171 POST: 7pt scale liberal-Conservate: self placement
+
+
+anes16$dem<-with(anes16,ifelse(pid<4,1,0))
+anes16$dem[anes16$pid==4]<-NA ## set Independents to Missing
+with(anes16, table(dem,pid,useNA="ifany"))#check recode
+anes16$republican <- as.numeric(anes16$pid>=4)
+
+
+anes16$gender <- factor(ifelse(anes16$V161342 == -9, NA, ifelse(anes16$V161342 == 3, NA, anes16$V161342)))
+## V161002 Female
+## 1. Male
+## 2. Female
+## -1. Inapplicable
+## V161342 PRE: self-identified gender
+## -9. Refused
+## 1. Male
+## 2. Female
+## 3. Other
+
+
+anes16$income <- ifelse(anes16$V161361x<1,NA,anes16$V161361x)
+anes16$state <- anes16$V163001b
+
+anes16$immigrant = ifelse(anes16$V162313 < 0, NA, anes16$V162313)
+
+covs <- c("educyrs","age","gender","pid","income","state", "immigrant", "ftTrumpPost")
+
+##V162034a Numeric POST: For whom did R vote for President
+table(anes16$V162034a,exclude=c())
+### Check the code book to recode
+
+##V162157 Numeric POST: What should immigration levels be
+
+##V162158 Numeric POST: How likely immigration will take away jobs
+
+## Check to make sure all covariates exist in the data
+stopifnot(all(covs %in% names(anes16)))
+
+
+nes16 <-  anes16[,covs]
+
+stopifnot(nrow(nes16)==nrow(anes16))
+
+
+save(nes16,file="nes16.rda")
+source("Data/nes16setup.R") 
+```
+
+#More Recoding
+```{r}
+##We needed to do a little more cleanup, so we simply recoded some more variables below. 
+
+##summary(anes16$V162313) #feeling thermometer toward illegal immigrants
+##summary(anes16$V162034a) #who did R vote for for pres? 2=Trump
+anes16$income <- ifelse(anes16$V161361x<1,NA,anes16$V161361x)
+anes16$state <- anes16$V163001b
+anes16$gender <- factor(ifelse(anes16$V161342 == -9, NA, ifelse(anes16$V161342 == 3, NA, anes16$V161342)))
+anes16$immigrant = ifelse(anes16$V162313 < 0, NA, anes16$V162313)
+anes16$pid <- factor(with(anes16,ifelse( V161158x<0,NA,V161158x )))
+anes16$educyrs <- with(anes16,ifelse(V161270<0 | V161270 %in% c(90,95),NA,V161270-1))
+anes16$ftTrumpPost <- with(anes16, ifelse(V162079 < 0 | V162079 == 998, NA, V162079))
+anes16$age <- with(anes16,ifelse(V161267<0,NA,V161267))
+covs <- c("educyrs","age","gender","pid","income","state", "immigrant", "ftTrumpPost")
+nes16 <-  anes16[,covs]
+
+anes16$state = as.factor(anes16$state)
+anes16$pid = as.numeric(anes16$pid)
+anes16$gender <- factor(ifelse(anes16$V161342 == -9, NA, ifelse(anes16$V161342 == 3, NA, anes16$V161342)))
+```
+
+```{r}
+##StanGLM Models Run This
+
+##We wanted to try calculating a general linear model initially. The question we want to answer is if attitudes toward immigrants or socioeconomic status indicates supporting Trump more. So, for the post-survey, we set our dependent variable for our two models as the feeling thermomter for Trump after the election. Then, in our first model, we specified attitudes toward immigrants in the post election survey as the independent variable and controlled for years of education, age, gender, and party identification. In our second model, we specified our independent variable as income and controlled for years of education, age, gender, and party identification. We used these controls because they should have an effect on both the independent and dependent variables, so we wanted to reduce confounding from these different variables in our final results. 
+
+Imm_1 <- stan_glm(ftTrumpPost ~ immigrant + educyrs + age + gender + pid, data=anes16, 
+         family = gaussian(link = "identity"), prior_PD = T, 
+         prior = normal(autoscale = T), chains = 4, seed = 12345)
+
+Socio_1 <- stan_glm(ftTrumpPost ~ income + educyrs + age + gender + pid, data=anes16, 
+         family = gaussian(link = "identity"), prior_PD = T, 
+         prior = normal(autoscale = T), chains = 4, seed = 12345)
+
+```
+
+
+
+```{r}
+library(rstanarm)
+
+##We also wanted to try using a multi-level model with fixed and random effects. We made this choice because states are going to have inherent randomness in them. For our first model, we decided to put fixed effects for attitudes toward immigrants, years of education, age, gender, and party identification. Then, we included random effects for all of the different states. For our second model, we decided to put fixed effects for attitudes toward immigrants, years of education, age, gender, and party identification. We wanted to try calculating a general linear model initially. Then, we included random effects for all of the different states. We then generated a summary output and different coefficients from these outcomes. In the code chunk below, we specify different aspects of our model. We chose to make our family gaussian since our dependent variable should follow a normal distribution and set our link function as the identity one. 
+
+
+
+stglmer1 = stan_glmer(ftTrumpPost ~ ((immigrant + educyrs + age + gender + pid)|state), data=anes16, family = gaussian(link = "identity"), prior_PD = T, prior = normal(autoscale = T), chains = 4, seed = 12345)
+
+stglmer2 = stan_glmer(ftTrumpPost ~ ((income + educyrs + age + gender + pid)|state), data=anes16, family = gaussian(link = "identity"), prior_PD = T, prior = normal(autoscale = T), chains = 4, seed = 12345)
+
+prior_summary(stglmer1)
+
+
+coef(stglmer1)
+coef(stglmer2)
+
+stglmer = stan_glmer(ftTrumpPost ~ (immigrant|state), data=anes16, family = gaussian(link = "identity"), prior_PD = T, prior = normal(autoscale = T), chains = 4, seed = 12345)
+summary(stglmer)
+```
+
+```{r}
+summary(stglmer1)
+summary(stglmer2)
+```
+
+```{r}
+##Then, we tried plotting our credible intervals to show how often these different values would fall in the range of our model. 
+
+library(bayesplot)
+library(rstanarm)
+library(ggplot2)
+
+nes16a = nes16[, - 5]
+nes16a = na.omit(nes16a)
+
+nes16b = nes16[, - 7]
+nes16b = na.omit(nes16b)
+
+y_repa = posterior_predict(stglmer1, re.form = ~0)
+y_repb = posterior_predict(stglmer2, re.form = ~0)
+
+
+color_scheme_set("purple")
+ppc_intervals(y = nes16a$ftTrumpPost, yrep = y_repa, x = nes16a$immigrant, prob = 0.5) + labs(x = "FT Immigration", y = "FT Trump Post", title = "50% posterior predictive intervals") + panel_bg(fill = "gray95", color = NA) + grid_lines(color = "white")
+color_scheme_set("red")
+ppc_intervals(y = nes16b$ftTrumpPost, yrep = y_repb, x = nes16b$income, prob = 0.5) + labs(x = "Income", y = "FT Trump Post", title = "50% posterior predictive intervals") + panel_bg(fill = "gray95", color = NA) + grid_lines(color = "white")
+```
+
+```{r setup, include=FALSE}
+library(readstata13)
+library(tidyverse)
+library(car)
+library(bayesplot)
+library(rstanarm)
+library(ggplot2)
+library(stargazer)
+
+##summary(anes16$V162313) #feeling thermometer toward illegal immigrants
+##summary(anes16$V162034a) #who did R vote for for pres? 2=Trump
+anes16 <- read.dta13("http://jakebowers.org/PS531/anes_timeseries_2016.dta")
+anes16$income <- ifelse(anes16$V161361x<1,NA,anes16$V161361x)
+anes16$state <- anes16$V163001b
+anes16$gender <- factor(ifelse(anes16$V161342 == -9, NA, ifelse(anes16$V161342 == 3, NA, anes16$V161342)))
+anes16$immigrantPost = ifelse(anes16$V162313 < 0, NA, anes16$V162313)
+anes16$pid <- factor(with(anes16,ifelse( V161158x<0,NA,V161158x )))
+anes16$educyrs <- with(anes16,ifelse(V161270<0 | V161270 %in% c(90,95),NA,V161270-1))
+anes16$ftTrumpPost <- with(anes16, ifelse(V162079 < 0 | V162079 == 998, NA, V162079))
+anes16$age <- with(anes16,ifelse(V161267<0,NA,V161267))
+anes16$ftTrumpPre <- with(anes16, ifelse(V161087 < 0 | V161087 == 998, NA, V161087))
+anes16$immigrantPre = ifelse(anes16$V161192 < 0, NA, anes16$V161192)
+
+anes16$state = as.factor(anes16$state)
+anes16$pid = as.numeric(anes16$pid)
+anes16$gender <- factor(ifelse(anes16$V161342 == -9, NA, ifelse(anes16$V161342 == 3, NA, anes16$V161342)))
+
+covs <- c("educyrs","age","gender","pid","income","state", "immigrantPost", "ftTrumpPost", "ftTrumpPre", "immigrantPre")
+nes16 <-  anes16[,covs]
+
+
+
+nes16a = nes16[, - 5]
+nes16a = na.omit(nes16a)
+
+nes16b = nes16[, - 7]
+nes16b = na.omit(nes16b)
+
+nes16c = nes16[, -c(1:5)]
+nes16c = na.omit(nes16c)
+
+output = stan_glm(ftTrumpPost~immigrantPost + educyrs + age + gender + pid, data = nes16)
+output2 = stan_glm(ftTrumpPost~income + educyrs + age + gender + pid, data = nes16)
+output3 = stan_glm(ftTrumpPre~immigrantPre + educyrs + age + gender + pid, data = nes16)
+output4 = stan_glm(ftTrumpPre~income + educyrs + age + gender + pid, data = nes16)
+```
+So after cleaning up the data a little bit more than you did (thanks!), we ran some models predicting the Trump vote[on a feeling thermometer] by pre-election immigration status toward unauthorized immigrants [feeling thermometer] and respondents' income. We also ran some models with post-election income of respondents and post election answers to a question about illegal immigration.
+
+```{r, echo=FALSE, results='asis'}
+stargazer(output, output2, header = F)
+```
+#As far as answering the question of whether SES of immigration does a better job predicting the Trump vote, our models suggest that immigration does a slightly better job than income--which we chose as a proxy for SES. 
+
+```{r, echo=FALSE}
+par(mfrow = c(2,2))
+plot(output3)#pre imm
+plot(output4)#pre inc
+plot(output)#imm post
+plot(output2)#inc post
+output
+output2
+
+posterior_interval(output, prob = 0.95)
+posterior_interval(output2, prob = 0.95)
+posterior_interval(output3, prob = 0.95)
+posterior_interval(output4, prob = 0.95)
+```
+
+```{r}
+prior_summary(output3)
+my_prior=normal(location=0,scale=10,autoscale = F)
+
+Imm_1 <- stan_glm(ftTrumpPost ~ V162313 + income+educyrs + age + gender + pid, data=anes16, chains = 4, seed = 12345)
+summary(Imm_1 )
+plot(Imm_1)
+
+Imm_2 <- stan_glm(ftTrumpPost ~ V162313 + income+educyrs + age + gender + pid, data=anes16, chains = 4,prior=my_prior, seed = 12345)
+summary(Imm_2 )
+plot(Imm_2)
+
+Imm_1$coefficients
+Imm_2$coefficients
+```
+Our plan was to use the pre-election models as our prior information to inform the models of post-election feeling thermometer scores toward Trump; however, we were having some trouble specifying the pre-election models as prior information.
+
+We are pretty sure that the prior distribution we specified isn't correct as the prior information didn't improve our predictions much at all. We would expect that pre-election information would be highly informative, not weakly informative. Hence, this is why we think that we specified the priors incorrectly. 
+
+
+# References
+https://cran.r-project.org/web/packages/rstanarm/vignettes/rstanarm.html#step-1-specify-a-posterior-distribution
+
+https://cran.r-project.org/web/packages/rstanarm/vignettes/priors.html
+
+http://mc-stan.org/rstanarm/articles/glmer.html

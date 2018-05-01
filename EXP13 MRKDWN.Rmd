@@ -1,0 +1,129 @@
+---
+title: "Exploration 13"
+author: "Jack, James, and Zach"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+header-includes: \usepackage{dcolumn}
+output: pdf_document
+---
+```{r include=FALSE, cache=FALSE}
+# Some customization.  You can alter or delete as desired (if you know what you are doing).
+# knitr settings to control how R chunks work.
+
+## To make the html file do
+## render("exploration4.Rmd",output_format=html_document(fig_retina=FALSE))
+## To make the pdf file do
+## render("exploration4.Rmd",output_format=pdf_document())
+
+require(knitr)
+opts_chunk$set(
+  tidy=FALSE,     # display code as typed
+  echo=TRUE,
+  results='markup',
+  strip.white=TRUE,
+  fig.path='figs/fig',
+  cache=FALSE,
+  highlight=TRUE,
+  width.cutoff=132,
+  size='footnotesize',
+  out.width='.9\\textwidth',
+  fig.retina=FALSE,
+  message=FALSE,
+  comment=NA)
+
+if(!file.exists('figs')) dir.create('figs')
+
+options(SweaveHooks=list(fig=function(){
+			   par(mar=c(3.5, 3, 1.1, 0),
+			       pty="s",
+			       mgp=c(1.5,0.5,0),
+			       oma=c(0,0,0,0))},
+			 echo=function(){options(continue=" ") ##Don't show "+" prompts,
+			 options(prompt=" ")
+			 }),
+	digits=4,
+	scipen=8,
+	width=132
+	)
+options(error=function(){options(prompt="> ",continue="+ ");NULL})
+```
+
+```{r setup, include=FALSE}
+library(readstata13)
+library(tidyverse)
+library(car)
+library(bayesplot)
+library(rstanarm)
+library(ggplot2)
+library(stargazer)
+
+##summary(anes16$V162313) #feeling thermometer toward illegal immigrants
+##summary(anes16$V162034a) #who did R vote for for pres? 2=Trump
+anes16 <- read.dta13("http://jakebowers.org/PS531/anes_timeseries_2016.dta")
+anes16$income <- ifelse(anes16$V161361x<1,NA,anes16$V161361x)
+anes16$state <- anes16$V163001b
+anes16$gender <- factor(ifelse(anes16$V161342 == -9, NA, ifelse(anes16$V161342 == 3, NA, anes16$V161342)))
+anes16$immigrantPost = ifelse(anes16$V162313 < 0, NA, anes16$V162313)
+anes16$pid <- factor(with(anes16,ifelse( V161158x<0,NA,V161158x )))
+anes16$educyrs <- with(anes16,ifelse(V161270<0 | V161270 %in% c(90,95),NA,V161270-1))
+anes16$ftTrumpPost <- with(anes16, ifelse(V162079 < 0 | V162079 == 998, NA, V162079))
+anes16$age <- with(anes16,ifelse(V161267<0,NA,V161267))
+anes16$ftTrumpPre <- with(anes16, ifelse(V161087 < 0 | V161087 == 998, NA, V161087))
+anes16$immigrantPre = ifelse(anes16$V161192 < 0, NA, anes16$V161192)
+
+anes16$state = as.factor(anes16$state)
+anes16$pid = as.numeric(anes16$pid)
+anes16$gender <- factor(ifelse(anes16$V161342 == -9, NA, ifelse(anes16$V161342 == 3, NA, anes16$V161342)))
+
+covs <- c("educyrs","age","gender","pid","income","state", "immigrantPost", "ftTrumpPost", "ftTrumpPre", "immigrantPre")
+nes16 <-  anes16[,covs]
+
+
+
+nes16a = nes16[, - 5]
+nes16a = na.omit(nes16a)
+
+nes16b = nes16[, - 7]
+nes16b = na.omit(nes16b)
+
+nes16c = nes16[, -c(1:5)]
+nes16c = na.omit(nes16c)
+
+output = stan_glm(ftTrumpPost~immigrantPost + educyrs + age + gender + pid, data = nes16)
+output2 = stan_glm(ftTrumpPost~income + educyrs + age + gender + pid, data = nes16)
+output3 = stan_glm(ftTrumpPre~immigrantPre + educyrs + age + gender + pid, data = nes16)
+output4 = stan_glm(ftTrumpPre~income + educyrs + age + gender + pid, data = nes16)
+```
+So after cleaning up the data a little bit more than you did (thanks!), we ran some models predicting the Trump vote[on a feeling thermometer] by pre-election immigration status toward unauthorized immigrants [feeling thermometer] and respondents' income. We also ran some models with post-election income of respondents and post election answers to a question about illegal immigration.
+
+```{r, echo=FALSE, results='asis'}
+stargazer(output, output2, header = F)
+```
+#As far as answering the question of whether SES of immigration does a better job predicting the Trump vote, our models suggest that immigration does a slightly better job than income--which we chose as a proxy for SES. 
+
+```{r, echo=FALSE}
+par(mfrow = c(2,2))
+plot(output3)#pre imm
+plot(output4)#pre inc
+plot(output)
+plot(output2)
+```
+
+```{r}
+prior_summary(output3)
+my_prior=normal(location=0,scale=10,autoscale = F)
+
+Imm_1 <- stan_glm(ftTrumpPost ~ V162313 + income+educyrs + age + gender + pid, data=anes16, chains = 4, seed = 12345)
+summary(Imm_1 )
+plot(Imm_1)
+
+Imm_2 <- stan_glm(ftTrumpPost ~ V162313 + income+educyrs + age + gender + pid, data=anes16, chains = 4,prior=my_prior, seed = 12345)
+summary(Imm_2 )
+plot(Imm_2)
+
+Imm_1$coefficients
+Imm_2$coefficients
+```
+Our plan was to use the pre-election models as our prior information to inform the models of post-election feeling thermometer scores toward Trump; however, we were having some trouble specifying the pre-election models as prior information.
+
+We are pretty sure that the prior distribution we specified isn't correct as the prior information didn't improve our predictions much at all. We would expect that pre-election information would be highly informative, not weakly informative. Hence, this is why we think that we specified the priors incorrectly. 
+
